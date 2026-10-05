@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -11,7 +12,6 @@
 
     --bg: #101218;
     --panel: #171a22;
-    --panel-2: #1c202a;
     --line: #292e3a;
 
     --text: #d8deea;
@@ -334,8 +334,12 @@
 <div id="out"></div>
 
 <script>
+  const STORAGE_KEY = "notes-viewer-state";
+
   const out = document.getElementById("out");
   const countEl = document.getElementById("count");
+
+  let currentText = "";
 
   /* =========================
      Helpers
@@ -389,6 +393,26 @@
     return row;
   }
 
+  /* =========================
+     Persistence
+     ========================= */
+
+  function saveState() {
+    const checked = [
+      ...out.querySelectorAll(
+        'input[type="checkbox"]'
+      )
+    ].map(checkbox => checkbox.checked);
+
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        text: currentText,
+        checked
+      })
+    );
+  }
+
   function updateCount() {
     const all = out.querySelectorAll(
       'input[type="checkbox"]'
@@ -423,7 +447,9 @@
   const META =
     /^(TIME|DATE|STATUS):\s*(.+)$/i;
 
-  function render(text) {
+  function render(text, savedChecked = null) {
+    currentText = text;
+
     out.replaceChildren();
 
     const lines = text
@@ -442,9 +468,9 @@
 
       let match;
 
-      /* -------------------------
+      /* =========================
          Title
-         ------------------------- */
+         ========================= */
 
       match = line.match(TITLE);
 
@@ -456,9 +482,9 @@
         continue;
       }
 
-      /* -------------------------
+      /* =========================
          Section
-         ------------------------- */
+         ========================= */
 
       match = line.match(SECTION);
 
@@ -477,9 +503,9 @@
         continue;
       }
 
-      /* -------------------------
+      /* =========================
          Time block
-         ------------------------- */
+         ========================= */
 
       match = line.match(TIME);
 
@@ -524,9 +550,9 @@
         continue;
       }
 
-      /* -------------------------
+      /* =========================
          Checkbox task
-         ------------------------- */
+         ========================= */
 
       match = line.match(CHECK);
 
@@ -544,9 +570,9 @@
         continue;
       }
 
-      /* -------------------------
+      /* =========================
          Metadata
-         ------------------------- */
+         ========================= */
 
       match = line.match(META);
 
@@ -568,9 +594,9 @@
         continue;
       }
 
-      /* -------------------------
-         FINISH LINE
-         ------------------------- */
+      /* =========================
+         Finish line
+         ========================= */
 
       if (line === "## FINISH LINE") {
         const finish = el("div", "finish");
@@ -591,9 +617,9 @@
         continue;
       }
 
-      /* -------------------------
-         RULE
-         ------------------------- */
+      /* =========================
+         Rule
+         ========================= */
 
       if (line === "## RULE") {
         const rule = el("div", "rule");
@@ -614,9 +640,9 @@
         continue;
       }
 
-      /* -------------------------
+      /* =========================
          Normal text
-         ------------------------- */
+         ========================= */
 
       const paragraph = el("p");
 
@@ -629,6 +655,18 @@
       } else {
         out.append(paragraph);
       }
+    }
+
+    /* Restore checkbox state */
+
+    if (savedChecked) {
+      const checkboxes = out.querySelectorAll(
+        'input[type="checkbox"]'
+      );
+
+      checkboxes.forEach((checkbox, index) => {
+        checkbox.checked = !!savedChecked[index];
+      });
     }
 
     updateCount();
@@ -657,30 +695,36 @@
   }
 
   /* =========================
-     Events
+     Checkbox changes
      ========================= */
 
-  out.addEventListener(
-    "change",
-    updateCount
-  );
+  out.addEventListener("change", () => {
+    updateCount();
+    saveState();
+  });
 
-  document.addEventListener(
-    "paste",
-    event => {
-      const text =
-        event.clipboardData &&
-        event.clipboardData.getData("text");
+  /* =========================
+     Paste
+     ========================= */
 
-      if (!text || !text.trim()) {
-        return;
-      }
+  document.addEventListener("paste", event => {
+    const text =
+      event.clipboardData &&
+      event.clipboardData.getData("text");
 
-      event.preventDefault();
-
-      render(text);
+    if (!text || !text.trim()) {
+      return;
     }
-  );
+
+    event.preventDefault();
+
+    render(text);
+    saveState();
+  });
+
+  /* =========================
+     Paste button
+     ========================= */
 
   document.getElementById("paste").onclick =
     async () => {
@@ -690,6 +734,7 @@
 
         if (text.trim()) {
           render(text);
+          saveState();
         }
       } catch {
         // Clipboard permission denied.
@@ -697,11 +742,48 @@
       }
     };
 
-  document.getElementById("clear").onclick =
-    empty;
+  /* =========================
+     Clear
+     ========================= */
 
-  empty();
+  document.getElementById("clear").onclick = () => {
+    localStorage.removeItem(STORAGE_KEY);
+
+    currentText = "";
+
+    empty();
+  };
+
+  /* =========================
+     Restore saved state
+     ========================= */
+
+  const saved =
+    localStorage.getItem(STORAGE_KEY);
+
+  if (saved) {
+    try {
+      const state = JSON.parse(saved);
+
+      if (state.text) {
+        render(
+          state.text,
+          state.checked
+        );
+      } else {
+        empty();
+      }
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
+      empty();
+    }
+  } else {
+    empty();
+  }
 </script>
 
 </body>
 </html>
+
+
+And **Clear** removes both the displayed plan and its saved state.
