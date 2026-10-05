@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Notes Viewer</title>
 <style>
   :root {
@@ -28,10 +28,11 @@
   }
   .bar {
     position: sticky; top: 0; z-index: 1;
-    display: flex; justify-content: flex-end; gap: 6px;
+    display: flex; align-items: center; gap: 6px;
     padding: 10px 16px;
     background: linear-gradient(var(--bg) 70%, transparent);
   }
+  #count { margin-right: auto; font: 12px var(--mono); color: var(--dim); }
   button {
     font: inherit; font-size: 12px; font-family: var(--mono);
     background: var(--panel); color: var(--dim);
@@ -39,7 +40,7 @@
     padding: 4px 10px; cursor: pointer;
   }
   button:hover { color: var(--text); border-color: var(--dim); }
-  button:focus-visible { outline: 2px solid var(--head); outline-offset: 1px; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--head); outline-offset: 2px; }
 
   #out { max-width: 760px; margin: 0 auto; padding: 8px 20px 80px; }
   .empty { color: var(--dim); font-family: var(--mono); font-size: 14px; padding-top: 12vh; text-align: center; }
@@ -54,24 +55,49 @@
     color: var(--head); margin: 28px 0 6px;
     padding-bottom: 6px; border-bottom: 1px solid var(--line);
   }
-  p, .li, .tm, .kv { margin: 0; }
+  p, .kv { margin: 0; }
   .gap { height: 8px; }
-  .li { position: relative; padding-left: 1.3em; }
-  .li::before { content: "•"; position: absolute; left: .35em; color: var(--dim); }
-  .li.ok::before { content: "✓"; left: .2em; color: var(--ok); }
+
+  /* checkbox */
+  input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    flex: none; width: 16px; height: 16px; margin: 5px 0 0;
+    border: 1.5px solid var(--dim); border-radius: 4px;
+    background: transparent; cursor: pointer;
+  }
+  input[type="checkbox"]:hover { border-color: var(--text); }
+  input[type="checkbox"]:checked {
+    background: var(--ok) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%2312141a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 100% no-repeat;
+    border-color: var(--ok);
+  }
+
+  /* list items */
+  .li { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; padding: 1px 0; }
   .li.d1 { margin-left: 1.3em; } .li.d2 { margin-left: 2.6em; } .li.d3 { margin-left: 3.9em; }
-  .tm { display: grid; grid-template-columns: 7.5em 1fr; gap: 0 12px; margin-top: 12px; font-weight: 600; }
+  .li input:checked ~ span { color: var(--dim); text-decoration: line-through; }
+
+  /* time blocks */
+  .tm {
+    display: grid; grid-template-columns: 16px 7.5em 1fr; column-gap: 12px;
+    align-items: start; margin-top: 12px; font-weight: 600; cursor: pointer;
+  }
   .tm .t { font: 500 13px/1.9 var(--mono); color: var(--time); }
+  .tm input:checked ~ .t { opacity: .45; }
+  .tm input:checked ~ .ti { color: var(--dim); text-decoration: line-through; }
+
   .kv .k { color: var(--dim); }
   code { font: 14px var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
 
   @media (max-width: 520px) {
-    .tm { grid-template-columns: 1fr; }
+    .tm { grid-template-columns: 16px 1fr; }
+    .tm .t, .tm .ti { grid-column: 2; }
+    .tm input { grid-row: 1 / span 2; }
   }
 </style>
 </head>
 <body>
   <div class="bar">
+    <span id="count"></span>
     <button id="paste" type="button">Paste</button>
     <button id="clear" type="button">Clear</button>
   </div>
@@ -79,12 +105,19 @@
 
 <script>
   const out = document.getElementById('out');
+  const countEl = document.getElementById('count');
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
     if (text !== undefined) e.textContent = text;
     return e;
+  }
+
+  function checkbox() {
+    const cb = el('input');
+    cb.type = 'checkbox';
+    return cb;
   }
 
   // Text with `inline code` support
@@ -104,6 +137,18 @@
   const LABEL = /^([A-Za-z][A-Za-z ]{0,18}):\s+(.+)$/;
 
   function depth(ws) { return Math.min(3, Math.floor(ws.replace(/\t/g, '  ').length / 2)); }
+
+  function item(level, text) {
+    const row = el('label', 'li d' + level);
+    row.append(checkbox(), inline(el('span'), text));
+    return row;
+  }
+
+  function updateCount() {
+    const all = out.querySelectorAll('input[type="checkbox"]');
+    const done = out.querySelectorAll('input[type="checkbox"]:checked');
+    countEl.textContent = all.length ? `${done.length} / ${all.length} done` : '';
+  }
 
   function render(text) {
     out.replaceChildren();
@@ -127,13 +172,13 @@
       } else if (isCaps(s)) {
         out.append(first ? el('h1', '', s) : el('h2', '', s));
       } else if ((m = s.match(TIME))) {
-        const row = el('div', 'tm');
-        row.append(el('span', 't', `${m[1]}–${m[2]}`), inline(el('span'), m[3]));
+        const row = el('label', 'tm');
+        row.append(checkbox(), el('span', 't', `${m[1]}–${m[2]}`), inline(el('span', 'ti'), m[3]));
         out.append(row);
       } else if ((m = line.match(CHECK))) {
-        out.append(inline(el('div', 'li ok d' + depth(m[1])), m[2]));
+        out.append(item(depth(m[1]), m[2]));
       } else if ((m = line.match(BULLET))) {
-        out.append(inline(el('div', 'li d' + depth(m[1])), m[2]));
+        out.append(item(depth(m[1]), m[2]));
       } else if ((m = s.match(LABEL))) {
         const kv = el('p', 'kv');
         kv.append(el('span', 'k', m[1] + ': '));
@@ -144,6 +189,7 @@
       }
       first = false;
     }
+    updateCount();
   }
 
   function empty() {
@@ -151,7 +197,10 @@
     const box = el('div', 'empty');
     box.append('Press ', el('kbd', '', 'Ctrl / ⌘ + V'), ' to paste your text');
     out.append(box);
+    updateCount();
   }
+
+  out.addEventListener('change', updateCount);
 
   // Paste anywhere on the page
   document.addEventListener('paste', e => {
