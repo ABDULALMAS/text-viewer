@@ -28,7 +28,7 @@
   /* Top bar */
   .bar {
     position: sticky; top: 0; z-index: 10;
-    display: flex; align-items: center; gap: 8px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
     padding: 10px 16px;
     background: rgba(16, 18, 24, 0.92);
     backdrop-filter: blur(10px);
@@ -47,6 +47,14 @@
   button:disabled { opacity: .35; cursor: not-allowed; }
   button.main { color: var(--ok); border-color: var(--ok); }
   [hidden] { display: none !important; }
+
+  /* Tabs */
+  #tabs { display: flex; gap: 4px; }
+  .tab { padding: 5px 9px; }
+  .tab.has { color: var(--text); }
+  .tab.run { color: var(--time); border-color: var(--time); }
+  .tab.on { color: var(--head); border-color: var(--head); }
+  .tab.on:disabled { opacity: 1; }
 
   /* Main */
   #out { max-width: 820px; margin: 0 auto; padding: 32px 24px 100px; }
@@ -135,6 +143,7 @@
 <body>
 
 <div class="bar">
+  <div id="tabs" role="tablist"></div>
   <span id="count"></span>
   <button id="edit" type="button">Edit</button>
   <button id="save" type="button" class="main" hidden>Save</button>
@@ -149,17 +158,25 @@
   const STORAGE_KEY = "notes-viewer-state";
   const MAX_EXT = 2;       // extensions per block
   const EXT_CAP = 0.5;     // total extension <= 50% of original duration
+  const TABS = 5;          // number of note tabs
 
   const out = document.getElementById("out");
   const countEl = document.getElementById("count");
   const $ = id => document.getElementById(id);
 
-  // st.blocks[key] = { status, dur, deadline, ext, extMin }  status: active | done | incomplete
-  let st = { text: "", checked: {}, blocks: {}, active: null };
+  // each tab: { text, checked, blocks, active }
+  // blocks[key] = { status, dur, deadline, ext, extMin }  status: active | done | incomplete
+  const blank = () => ({ text: "", checked: {}, blocks: {}, active: null });
+  const data = { cur: 0, tabs: Array.from({ length: TABS }, blank) };
+  let st = data.tabs[0];   // state of the current tab
   let editing = false;
   let editStart = 0;
   let clockEl = null;
   let renderedOver = false;
+
+  function setSt(next) {
+    data.tabs[data.cur] = st = next;
+  }
 
   /* Helpers */
 
@@ -225,13 +242,30 @@
   /* Persistence */
 
   function saveState() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(st)); } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+  }
+
+  function renderTabs() {
+    const box = $("tabs");
+    box.replaceChildren();
+    data.tabs.forEach((t, i) => {
+      const cls = "tab" + (i === data.cur ? " on" : "") + (t.text.trim() ? " has" : "") + (t.active ? " run" : "");
+      const b = el("button", cls, String(i + 1));
+      b.type = "button";
+      b.dataset.tab = i;
+      b.disabled = editing;
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", i === data.cur ? "true" : "false");
+      b.setAttribute("aria-label", "Notes " + (i + 1));
+      box.append(b);
+    });
   }
 
   function updateCount() {
     const all = out.querySelectorAll('input[type="checkbox"]');
     const done = out.querySelectorAll('input[type="checkbox"]:checked');
     countEl.textContent = all.length ? `${done.length} / ${all.length} done` : "";
+    renderTabs();
   }
 
   /* Parser */
@@ -454,6 +488,20 @@
     st.text.trim() ? render(st.text, true) : empty();
   }
 
+  /* Tabs */
+
+  $("tabs").addEventListener("click", event => {
+    const btn = event.target.closest("button[data-tab]");
+    if (!btn || editing) return;
+    const i = +btn.dataset.tab;
+    if (i === data.cur) return;
+    data.cur = i;
+    st = data.tabs[i];
+    saveState();
+    show();
+    window.scrollTo(0, 0);
+  });
+
   /* Block actions */
 
   out.addEventListener("click", event => {
@@ -517,6 +565,7 @@
     $("cancel").hidden = !editing;
     $("paste").hidden = editing;
     $("clear").hidden = editing;
+    renderTabs();
   }
 
   function startEdit() {
@@ -574,7 +623,7 @@
   function loadPlan(text) {
     const touched = Object.keys(st.blocks).length > 0;
     if (touched && !confirm("Replace the current plan and reset today's progress?")) return;
-    st = { text, checked: {}, blocks: {}, active: null };
+    setSt({ text, checked: {}, blocks: {}, active: null });
     render(text);
     saveState();
   }
@@ -596,11 +645,11 @@
     }
   };
 
-  /* Clear */
+  /* Clear (current tab only) */
 
   $("clear").onclick = () => {
-    try { localStorage.removeItem(STORAGE_KEY); } catch {}
-    st = { text: "", checked: {}, blocks: {}, active: null };
+    setSt(blank());
+    saveState();
     empty();
   };
 
@@ -608,19 +657,28 @@
 
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    if (saved && saved.text) {
-      st = {
-        text: saved.text,
-        checked: saved.checked && !Array.isArray(saved.checked) ? saved.checked : {},
-        blocks: saved.blocks || {},
-        active: saved.active || null
-      };
-      if (st.active && !st.blocks[st.active]) st.active = null;
+    if (saved) {
+      // new format: { cur, tabs: [...] }; old single-note format becomes tab 1
+      const list = Array.isArray(saved.tabs) ? saved.tabs : (saved.text ? [saved] : []);
+      list.slice(0, TABS).forEach((t, i) => {
+        if (!t) return;
+        const tab = {
+          text: t.text || "",
+          checked: t.checked && !Array.isArray(t.checked) ? t.checked : {},
+          blocks: t.blocks || {},
+          active: t.active || null
+        };
+        if (tab.active && !tab.blocks[tab.active]) tab.active = null;
+        data.tabs[i] = tab;
+      });
+      if (Number.isInteger(saved.cur) && saved.cur >= 0 && saved.cur < TABS) data.cur = saved.cur;
+      st = data.tabs[data.cur];
     }
   } catch {
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
   }
 
+  setBar();
   show();
 </script>
 
